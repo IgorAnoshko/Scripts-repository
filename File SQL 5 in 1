@@ -1,0 +1,247 @@
+--1. AVG, MIN, MAX для кожної дати
+
+--Створення CTE union_ads_basic_daily
+with union_ads_basic_daily as (
+ select ad_date, 
+        spend, 
+        impressions, 
+        reach,
+        clicks, 
+        leads, 
+        value, 
+        'facebook' media_source
+ from "facebook_ads_basic_daily" fabd
+ --Об'єднання даних двох таблиць "facebook_ads_basic_daily" і "google_ads_basic_daily"
+union all 
+
+ select ad_date,  
+        spend, 
+        impressions, 
+        reach, 
+        clicks,
+        leads, 
+        value, 
+        'google' media_source
+ from "google_ads_basic_daily" gabd )
+ --Для кожної пари показників ad_date, media_source обчислюємо  агреговані значення spend, impressions, reach, clicks, leads, 
+        value,  середні AVG, мінімальні MIN, максимальні MAX.
+--З допомогою  round і CAST приводим тип числа до NUMERIC і округлюєм до 2 знаків після коми
+ SELECT ad_date,
+        media_source,
+        round(AVG(spend::numeric), 2) avg_spend,
+        round(AVG(impressions::numeric), 2) avg_impressions,
+        round(AVG(clicks::numeric), 2) avg_clicks,
+        round(AVG(reach::numeric), 2) avg_reach,
+        round(AVG(leads::numeric), 2) avg_leads,
+        round(AVG(value::numeric), 2) avg_value,
+        round(MIN(spend::numeric), 2) min_spend,
+        round(MIN(impressions::numeric), 2) min_impressions,
+        round(MIN(clicks)::numeric, 2) min_clicks,
+        round(MIN(reach::numeric), 2) min_reach,
+        round(MIN(leads::numeric), 2) min_leads,
+        round(MIN(value::numeric), 2) min_value,
+        round(MAX(spend::numeric), 2) max_spend,
+        round(MAX(impressions::numeric), 2) max_impressions,
+        round(MAX(clicks::numeric), 2) max_clicks,
+        round(MAX(reach::numeric), 2) max_reach,
+        round(MAX(leads::numeric), 2) max_leads,
+        round(MAX(value::numeric), 2) max_value
+ from union_ads_basic_daily
+ --Групуємо результати по ad_date, media_source
+ group by 1,2
+ --Сортуємо по ad_date по зростанню
+ order by 1
+
+--2. 5 днів з найбільшим загальним ROMI
+
+--Створюємо CTE union_ads_basic_daily
+with union_ads_basic_daily as (
+ select ad_date, 
+        spend, 
+        impressions, 
+        reach,
+        clicks, 
+        leads, 
+        value, 
+        'facebook' media_source
+ from "facebook_ads_basic_daily" 
+--Об'єднуєм дані з таблиць  "facebook_ads_basic_daily" і "google_ads_basic_daily"
+union all
+
+ select ad_date,  
+        spend, 
+        impressions, 
+        reach, 
+        clicks,
+        leads, 
+        value, 
+        'google' media_source
+ from "google_ads_basic_daily")
+--Для кожної дати (ad_date) обчислюєм загальні витрати на маркетинг total_spend, загальний дохід total_value, коефіцієнт повернення маркетингових інвестицій ROMI, 
+-- застосовуєм round і cast для приведення результатів до формату numeric і їх округлення до 2 чисел після коми. 
+ select ad_date,
+        SUM(spend) as total_spend,
+        SUM(value) as total_value,
+        round((((SUM(value::numeric))/(SUM(spend::numeric))-1)*100), 2) as ROMI
+ from union_ads_basic_daily
+ --Виключаємо порожні дати. берем тільки дати де сума витрат >0
+ where ad_date is not NULL
+ group by 1
+ having SUM(spend)>0
+ --Сортуєм по найбільшому ROMI
+ order by ROMI desc
+ --Беремо 5 днів 
+ limit 5
+
+--3.Компанія з найбільшим value
+
+--Створюємо CTE union_ads_basic_daily
+with union_ads_basic_daily as (
+ select ad_date, 
+        campaign_name, 
+        value, 
+        'facebook' media_source
+ from "facebook_ads_basic_daily" fabd
+--Робимо LEFT JOIN з таблицею "facebook_campaign", щоб підтягнути назву кампанії за campaign_id.
+left join "facebook_campaign" fc on fc.campaign_id=fabd.campaign_id
+--Об'єднуєм дані з таблиць "facebook_ads_basic_daily" і  "google_ads_basic_daily"
+union all 
+
+ select ad_date, 
+        campaign_name, 
+        value, 
+        'google' media_source
+ from "google_ads_basic_daily"
+ ),
+ --Створюємо ще CTE weekly_campaign_value
+weekly_campaign_value AS (
+--Зводимо всі дати до початку тижня.
+ select date_trunc('week', ad_date)::date  ad_week,
+        campaign_name,
+--Для кожної пари ad_week, campaign_name рахуємо   total_value   
+        SUM(value::numeric)  total_value
+ from union_ads_basic_daily
+ where ad_date IS NOT NULL
+ group by ad_week, campaign_name
+)
+--Вибираємо всі стовпці з CTE weekly_campaign_value
+ select *
+ from weekly_campaign_value total_value
+ --Сортуємо по найбільшому 
+ order by total_value desc
+ --Берем одну кампанію, яка принесла найбільший value за будь-який тиждень.
+ limit 1
+
+--4.Компанія, що мала найбільший приріст охоплення(reach)
+ 
+--Створюємо CTE union_ads_basic_daily
+ with union_ads_basic_daily as (
+  select ad_date,
+         campaign_name, 
+         reach, 
+         'facebook' media_source
+  from "facebook_ads_basic_daily" fabd
+--Додаєм через left join дані з таблиці "facebook_campaign"
+left join "facebook_campaign" fc on fc.campaign_id=fabd.campaign_id
+
+--Об'єднуєм таблиці  "facebook_ads_basic_daily" і "google_ads_basic_daily"
+union all 
+
+ select ad_date,
+        campaign_name, 
+        reach, 
+        'google' media_source
+ from "google_ads_basic_daily"
+ ),
+ --Робим агрегацію на рівні місяця
+monthly_data as 
+(
+--Зводимо всі дати до початку місяця і для кожної пари (ad_month, campaign_name) рахуємо загальне охоплення кампанії (total_reach) за місяць, приводячи результат в формат numeric і круглюючи до 2 знаків після коми.
+ select date_trunc('month', ad_date)::date as ad_month, 
+        campaign_name,
+        round(SUM(reach::numeric), 2) total_reach
+ from union_ads_basic_daily
+ where ad_date IS NOT NULL
+ group by ad_month, campaign_name
+),
+--Використовуємо віконну функцію LAG(total_reach) з PARTITION BY campaign_name ORDER BY ad_month щоб побачити охоплення у попередньому місяці(prev_total_reach)
+monthly_data_w_Lags as 
+(
+ select ad_month,
+        campaign_name,
+        total_reach,
+        LAG(total_reach) over (partition by campaign_name order by ad_month) as prev_total_reach
+ from monthly_data
+),
+--Обчислюєм різницю  по охопленню між поточним і попереднім місяцем,  
+reach_diff_by_month as (
+ select ad_month,
+        campaign_name,
+        total_reach,
+        prev_total_reach,
+        (total_reach - coalesce(prev_total_reach, 0)) AS reach_diff
+    from monthly_data_w_Lags
+--Умова щоб підрахувати тільки приріст(збільшення) охоплення.    
+    where (total_reach - coalesce(prev_total_reach, 0)) > 0
+)
+ select *
+ from reach_diff_by_month
+ --Сортуємо по найбільшому значенню приросту охоплення
+ order by reach_diff desc
+ --Обираємо одну компанію
+ limit 1
+
+--5. Найтриваліший показ adset_name
+ 
+ --Створюємо CTE(union_ads_basic_daily), що об'єднує вибрані дані з таблиць  facebook і google
+ with union_ads_basic_daily as (
+ select distinct fabd.ad_date,
+                 fa.adset_name,
+                 'facebook' media_source
+ from "facebook_ads_basic_daily" fabd
+
+left join "facebook_adset" fa on fa.adset_id=fabd.adset_id
+
+union all 
+
+ select distinct ad_date,
+                 adset_name,
+                 'google' media_source
+ from "google_ads_basic_daily"
+ ),
+ --Нумеруєм дати для кожного adset (ROW_NUMBER), щоб можна було знайти неперервні дати.
+ name_dates as (
+  select adset_name,
+         ad_date,
+         ROW_NUMBER() over (partition by adset_name order by  ad_date)  rn
+  from union_ads_basic_daily
+),
+--Застосовуєм “gaps-and-islands” техніку: віднімаючи номер рядка від дати, отримуємо однакову групу для неперервних днів.
+grouped_dates as (
+  select adset_name,
+         ad_date,
+         (ad_date - INTERVAL '1 day' * rn)  streak_group
+  from name_dates
+),
+--Обчислюєм мінімальну і максимальну дату та тривалість для кожної неперервної групи.
+continuous_periods as (
+  select adset_name,
+         streak_group,
+         MIN(ad_date)  start_date,
+         MAX(ad_date)  end_date,
+         COUNT(*)  duration_days
+  from grouped_dates
+  group by adset_name, streak_group
+)
+--Повертаємо adset_name, мінімальну(початкову) дату(start_date), максимальну(кінцеву) дату (end_date), тривалість (duration_days)
+  select  adset_name,
+          start_date,
+          end_date,
+          duration_days
+  from continuous_periods
+  --Сортуємо по неперервній тривалості показу
+  order by duration_days desc
+  --Вибираємо найтриваліший показ рекламного набору .
+  limit 1
+
+ 
